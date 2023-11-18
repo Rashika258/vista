@@ -1,5 +1,20 @@
 import { log } from "console";
-import mongoose from "mongoose";
+import mongoose, { Types } from "mongoose";
+import { IUser } from "./user.model";
+import { IThread } from "./thread.model";
+
+export interface ICommunity {
+    id: string;
+    username: string;
+    name: string;
+    image?: string;
+    bio?: string;
+    createdBy: Types.ObjectId | IUser; // Assuming IUser is an interface for the User model
+    threads: Types.ObjectId[] | IThread[]; // Assuming IThread is an interface for the Thread model
+    members: Types.ObjectId[] | IUser[]; // Assuming IUser is an interface for the User model
+}
+
+export interface ICommunityDocument extends ICommunity, Document {}
 
 const communitySchema = new mongoose.Schema({
     id:{
@@ -36,9 +51,9 @@ const communitySchema = new mongoose.Schema({
 
 })
 
-const Community = mongoose.models.Community || mongoose.model("Community");
+const Community = mongoose.models.Community || mongoose.model<ICommunityDocument>("Community", communitySchema);
 
-const Community1 = mongoose.models.Community ?mongoose.models.Community : mongoose.model("Community");
+const Community1 = mongoose.models.Community ?mongoose.models.Community : mongoose.model("Community", communitySchema);
 
 log(Community, Community1)
 export default Community
