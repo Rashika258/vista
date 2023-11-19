@@ -1,5 +1,5 @@
 
-import winston from 
+import winston from ''
 
 const logger = winston.createLogger({
     level: 'error',
