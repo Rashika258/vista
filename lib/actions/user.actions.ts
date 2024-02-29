@@ -1,125 +1,100 @@
+"use server";
+
 import { FilterQuery, SortOrder } from "mongoose";
-import { connectToDataBase } from "../dbConnection";
-import Community, { ICommunity } from "../models/community.model";
+import { revalidatePath } from "next/cache";
+
+import Community from "../models/community.model";
 import Thread from "../models/thread.model";
-import User, { IUserDocument } from "../models/user.model";
+import User from "../models/user.model";
 
-export async function fetchUser(userId: string): Promise<IUserDocument | null> {
+import { connectToDB } from "../mongoose";
+
+export async function fetchUser(userId: string) {
   try {
-    await connectToDataBase();
+    connectToDB();
 
-    const user = await User.findOne<IUserDocument>({ id: userId })
-      .populate({
-        path: "communities",
-        model: Community,
-      })
-      .exec();
-
-    if (!user) {
-      console.error(`User with ID ${userId} not found`);
-      return null;
-    }
-
-    return user;
-  } catch (error) {
-    console.error("Error fetching user:", error);
-    throw error;
+    return await User.findOne({ id: userId }).populate({
+      path: "communities",
+      model: Community,
+    });
+  } catch (error: any) {
+    throw new Error(`Failed to fetch user: ${error.message}`);
   }
 }
 
+interface Params {
+  userId: string;
+  username: string;
+  name: string;
+  bio: string;
+  image: string;
+  path: string;
+}
+
 export async function updateUser({
-  id,
+  userId,
   bio,
   name,
-  userName, // Use the consistent field name
-  image, // path, // Assuming you use path later
-}: IUserDocument): Promise<void> {
+  path,
+  username,
+  image,
+}: Params): Promise<void> {
   try {
-    await connectToDataBase();
+    connectToDB();
 
     await User.findOneAndUpdate(
-      { id },
+      { id: userId },
       {
-        userName: userName.toLowerCase(), // Ensure consistent use of field names
+        username: username.toLowerCase(),
         name,
         bio,
         image,
         onboarded: true,
       },
-      {
-        upsert: true,
-      }
+      { upsert: true }
     );
 
-    // Uncomment the following if block if you have a revalidatePath function and want to call it based on a condition.
-    // if (path === "/profile/edit") {
-    //     revalidatePath(path);
-    // }
-  } catch (error) {
-    if (error instanceof Error) {
-      throw new Error(`Failed to create/update user: ${error.message}`);
+    if (path === "/profile/edit") {
+      revalidatePath(path);
     }
+  } catch (error: any) {
+    throw new Error(`Failed to create/update user: ${error.message}`);
   }
 }
 
-export async function fetchUserPosts(
-  userId: string
-): Promise<IUserDocument | null> {
+export async function fetchUserPosts(userId: string) {
   try {
-    await connectToDataBase();
+    connectToDB();
 
-    // Find the user with the given userId
-    const user = await User.findOne({ id: userId });
-
-    if (!user) {
-      console.error(`User with ID ${userId} not found`);
-      return null; // or handle this case as needed
-    }
-
-    // Populate the 'community' field
-
-    await user.populate([
-      {
-        path: "community",
-        model: Community,
-        select: "name id image _id",
-      },
-      {
-        path: "children",
-        model: Thread,
-        populate: {
-          path: "author",
-          model: User,
-          select: "name image id",
+    // Find all threads authored by the user with the given userId
+    const threads = await User.findOne({ id: userId }).populate({
+      path: "threads",
+      model: Thread,
+      populate: [
+        {
+          path: "community",
+          model: Community,
+          select: "name id image _id", // Select the "name" and "_id" fields from the "Community" model
         },
-      },
-    ]);
-    // await user.populate({
-    //     path: 'community',
-    //     model: Community,
-    //     select: 'name id image _id',
-    // }).execPopulate();
-
-    // // Populate the 'children' field and nested 'author' field
-    // await user.populate({
-    //     path: 'children',
-    //     model: Thread,
-    //     populate: {
-    //         path: 'author',
-    //         model: User,
-    //         select: 'name image id',
-    //     },
-    // }).execPopulate();
-
-    // The 'user' object now has populated 'community' and 'children' fields
-    return user as IUserDocument; // Casting to IUserDocument for correct return type
+        {
+          path: "children",
+          model: Thread,
+          populate: {
+            path: "author",
+            model: User,
+            select: "name image id", // Select the "name" and "_id" fields from the "User" model
+          },
+        },
+      ],
+    });
+    return threads;
   } catch (error) {
-    console.error("Error fetching user posts:", error);
-    // Handle the error or throw an exception based on your application's requirements
+    console.error("Error fetching user threads:", error);
     throw error;
   }
 }
 
+// Almost similar to Thead (search + pagination) and Community (search + pagination)
 export async function fetchUsers({
   userId,
   searchString = "",
@@ -134,36 +109,31 @@ export async function fetchUsers({
   sortBy?: SortOrder;
 }) {
   try {
-    await connectToDataBase();
+    connectToDB();
 
+    // Calculate the number of users to skip based on the page number and page size.
     const skipAmount = (pageNumber - 1) * pageSize;
+
+    // Create a case-insensitive regular expression for the provided search string.
     const regex = new RegExp(searchString, "i");
+
+    // Create an initial query object to filter users.
     const query: FilterQuery<typeof User> = {
-      id: {
-        $ne: userId,
-      },
+      id: { $ne: userId }, // Exclude the current user from the results.
     };
 
+    // If the search string is not empty, add the $or operator to match either username or name fields.
     if (searchString.trim() !== "") {
       query.$or = [
-        {
-          username: {
-            $regex: regex,
-          },
-        },
-        {
-          name: {
-            $regex: regex,
-          },
-        },
+        { username: { $regex: regex } },
+        { name: { $regex: regex } },
       ];
     }
 
-    const sortOptions = {
-      createdAt: sortBy,
-    };
+    // Define the sort options for the fetched users based on createdAt field and provided sort order.
+    const sortOptions = { createdAt: sortBy };
 
-    const userQuery = User.find(query)
+    const usersQuery = User.find(query)
       .sort(sortOptions)
       .skip(skipAmount)
       .limit(pageSize);
@@ -171,7 +141,7 @@ export async function fetchUsers({
     // Count the total number of users that match the search criteria (without pagination).
     const totalUsersCount = await User.countDocuments(query);
 
-    const users = await userQuery.exec();
+    const users = await usersQuery.exec();
 
     // Check if there are more users beyond the current page.
     const isNext = totalUsersCount > skipAmount + users.length;
@@ -179,37 +149,26 @@ export async function fetchUsers({
     return { users, isNext };
   } catch (error) {
     console.error("Error fetching users:", error);
-    // throw error;
-
-    // You can log additional information or customize error messages based on the specific error
-    if (error instanceof Error) {
-      throw new Error(`Failed to fetch users: ${error.message}`);
-    } else {
-      throw new Error("Failed to fetch users. Unknown error.");
-    }
+    throw error;
   }
 }
 
 export async function getActivity(userId: string) {
   try {
-    await connectToDataBase();
-    const userThreads = await Thread.find({
-      author: userId,
-    });
+    connectToDB();
 
-    const childThreadIds = userThreads.reduce(
-      async (accPromise, userThread) => {
-        const acc = await accPromise;
-        return acc.concat(userThread.children);
-      },
-      Promise.resolve([])
-    );
+    // Find all threads created by the user
+    const userThreads = await Thread.find({ author: userId });
 
+    // Collect all the child thread ids (replies) from the 'children' field of each user thread
+    const childThreadIds = userThreads.reduce((acc, userThread) => {
+      return acc.concat(userThread.children);
+    }, []);
+
+    // Find and return the child threads (replies) excluding the ones created by the same user
     const replies = await Thread.find({
-      _id: { $in: await childThreadIds },
-      author: {
-        $ne: userId,
-      },
+      _id: { $in: childThreadIds },
+      author: { $ne: userId }, // Exclude threads authored by the same user
     }).populate({
       path: "author",
       model: User,
