@@ -1,4 +1,4 @@
-"use server";
+// "use server";
 
 import { FilterQuery, SortOrder } from "mongoose";
 import { revalidatePath } from "next/cache";
@@ -11,6 +11,7 @@ import { connectToDB } from "../mongoose";
 
 export async function fetchUser(userId: string) {
   try {
+    debugger
     connectToDB();
 
     return await User.findOne({ id: userId }).populate({
